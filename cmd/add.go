@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -83,6 +85,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Check if this is a template file
+	isTemplate := strings.HasSuffix(processedPath.Source, ".tmpl")
+	if isTemplate && viper.GetBool("verbose") {
+		fmt.Printf("%s Template file detected: %s\n",
+			color.CyanString("📝"), filepath.Base(processedPath.Source))
+		fmt.Println("  Template files will be processed during installation")
+		fmt.Println("  Consider creating a .env file for any secrets needed")
+	}
+
 	// Determine target path
 	finalTargetPath := targetPath
 	if finalTargetPath == "" {
@@ -140,8 +151,15 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 		// Provide next steps
 		fmt.Println("\nNext steps:")
-		fmt.Println("  • The original file has been moved to packages directory")
-		fmt.Println("  • A symlink has been created at the original location")
+		if isTemplate {
+			fmt.Println("  • The template file has been moved to packages directory")
+			fmt.Println("  • Template will be processed during installation")
+			fmt.Println("  • Create .env files in package directory for any required secrets")
+			fmt.Println("  • Update package config with 'required_secrets' if needed")
+		} else {
+			fmt.Println("  • The original file has been moved to packages directory")
+			fmt.Println("  • A symlink has been created at the original location")
+		}
 		fmt.Printf("  • Run 'dotgo install %s' to install this package on other systems\n",
 			operation.PackageName)
 	}

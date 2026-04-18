@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -11,12 +12,14 @@ import (
 	"dotgo/pkg/config"
 	"dotgo/pkg/packages"
 	"dotgo/pkg/symlink"
+	"dotgo/pkg/template"
 )
 
 var (
 	installProfile  string
 	installPackages []string
 	forceInstall    bool
+	secretsFile     string
 )
 
 // installCmd represents the install command
@@ -27,17 +30,20 @@ var installCmd = &cobra.Command{
 
 This command will:
 1. Load the specified profile (or default profile)
-2. Install all packages in the profile, or specific packages if provided
-3. Create symlinks from package files to their target locations
-4. Handle conflicts by backing up existing files
-5. Run pre/post-install commands
+2. Validate required secrets for template files
+3. Install all packages in the profile, or specific packages if provided
+4. Process template files using available secrets
+5. Create symlinks from package files to their target locations
+6. Handle conflicts by backing up existing files
+7. Run pre/post-install commands
 
 Examples:
-  dotgo install                     # Install all packages from default profile
-  dotgo install --profile dev       # Install packages from 'dev' profile
-  dotgo install zsh git             # Install only 'zsh' and 'git' packages
-  dotgo install --force             # Force reinstall even if already installed
-  dotgo install --dry-run           # Show what would be installed without doing it`,
+  dotgo install                                    # Install all packages from default profile
+  dotgo install --profile dev                     # Install packages from 'dev' profile
+  dotgo install zsh git                           # Install only 'zsh' and 'git' packages
+  dotgo install --secrets-file ~/.dotgo-secrets   # Use custom secrets file for templates
+  dotgo install --force                           # Force reinstall even if already installed
+  dotgo install --dry-run                         # Show what would be installed without doing it`,
 	RunE: runInstall,
 }
 
@@ -47,6 +53,7 @@ func init() {
 	installCmd.Flags().StringVarP(&installProfile, "profile", "p", "", "profile to install (default: use config default)")
 	installCmd.Flags().StringSliceVar(&installPackages, "packages", []string{}, "specific packages to install")
 	installCmd.Flags().BoolVarP(&forceInstall, "force", "f", false, "force reinstall even if already installed")
+	installCmd.Flags().StringVar(&secretsFile, "secrets-file", "", "path to .env file containing secrets for template processing")
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
@@ -117,6 +124,11 @@ func runInstall(cmd *cobra.Command, args []string) error {
 
 	if viper.GetBool("verbose") {
 		fmt.Printf("Install order: %s\n", resolvedPackages)
+	}
+
+	// Validate required secrets for template files
+	if err := validateRequiredSecrets(packageMgr, resolvedPackages, cfg); err != nil {
+		return err
 	}
 
 	// Install packages
@@ -192,5 +204,74 @@ func runInstall(cmd *cobra.Command, args []string) error {
 		fmt.Println("  • Use 'dotgo packages list' to see all available packages")
 	}
 
+	return nil
+}
+
+// validateRequiredSecrets checks if all required secrets are available for template files
+func validateRequiredSecrets(packageMgr *packages.Manager, packageNames []string, cfg *config.Config) error {
+	templateEngine := template.NewEngine(&cfg.Settings.TemplateEngine, cfg.Settings.TemplateEngine.GlobalVariables)
+	
+	// Load secrets from specified file if provided
+	if secretsFile != "" {
+		if err := templateEngine.LoadEnvWithHierarchy(secretsFile); err != nil {
+			return fmt.Errorf("failed to load secrets from %s: %w", secretsFile, err)
+		}
+	}
+	
+	var allMissingSecrets []string
+	var packagesWithMissingSecrets []string
+	
+	for _, packageName := range packageNames {
+		pkg, err := packageMgr.LoadPackage(packageName)
+		if err != nil {
+			continue // Skip packages that can't be loaded
+		}
+		
+		var packageMissingSecrets []string
+		
+		// Check each file for required secrets
+		for _, file := range pkg.Files {
+			if file.Template && len(file.RequiredSecrets) > 0 {
+				missingSecrets := templateEngine.ValidateRequiredSecrets(file.RequiredSecrets)
+				if len(missingSecrets) > 0 {
+					packageMissingSecrets = append(packageMissingSecrets, missingSecrets...)
+					allMissingSecrets = append(allMissingSecrets, missingSecrets...)
+				}
+			}
+		}
+		
+		if len(packageMissingSecrets) > 0 {
+			packagesWithMissingSecrets = append(packagesWithMissingSecrets, packageName)
+		}
+	}
+	
+	if len(allMissingSecrets) > 0 {
+		// Remove duplicates
+		uniqueSecrets := make(map[string]bool)
+		var uniqueSecretsList []string
+		for _, secret := range allMissingSecrets {
+			if !uniqueSecrets[secret] {
+				uniqueSecrets[secret] = true
+				uniqueSecretsList = append(uniqueSecretsList, secret)
+			}
+		}
+		
+		fmt.Printf("%s Missing required secrets for template processing:\n", color.RedString("❌"))
+		for _, secret := range uniqueSecretsList {
+			fmt.Printf("  • %s\n", secret)
+		}
+		
+		fmt.Printf("\n%s Affected packages: %s\n", color.YellowString("⚠️"), strings.Join(packagesWithMissingSecrets, ", "))
+		
+		fmt.Println("\nTo fix this:")
+		fmt.Println("  • Create ~/.config/dotgo/secrets/.env with the required secrets")
+		fmt.Println("  • Or use --secrets-file to specify a custom .env file")
+		fmt.Println("  • Example .env format:")
+		fmt.Println("    GIT_USER_EMAIL=user@example.com")
+		fmt.Println("    GIT_SIGNING_KEY=ABC123")
+		
+		return fmt.Errorf("missing required secrets: %s", strings.Join(uniqueSecretsList, ", "))
+	}
+	
 	return nil
 }

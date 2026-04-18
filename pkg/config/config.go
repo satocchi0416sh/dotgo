@@ -98,11 +98,13 @@ type PackageConfig struct {
 
 // FileMapping represents a file mapping
 type FileMapping struct {
-	Source     string `yaml:"source"`
-	Target     string `yaml:"target"`
-	Executable bool   `yaml:"executable,omitempty"`
-	Template   bool   `yaml:"template,omitempty"`
-	Condition  string `yaml:"condition,omitempty"`
+	Source          string            `yaml:"source"`
+	Target          string            `yaml:"target"`
+	Executable      bool              `yaml:"executable,omitempty"`
+	Template        bool              `yaml:"template,omitempty"`
+	TemplateVars    map[string]any    `yaml:"template_vars,omitempty"`
+	RequiredSecrets []string          `yaml:"required_secrets,omitempty"`
+	Condition       string            `yaml:"condition,omitempty"`
 }
 
 // TemplateMapping represents a template file mapping

@@ -55,12 +55,14 @@ type Package struct {
 
 // PackageFile represents a file in a package
 type PackageFile struct {
-	Source     string
-	Target     string
-	Executable bool
-	Template   bool
-	Condition  string
-	LinkInfo   *symlink.LinkInfo
+	Source          string
+	Target          string
+	Executable      bool
+	Template        bool
+	TemplateVars    map[string]any
+	RequiredSecrets []string
+	Condition       string
+	LinkInfo        *symlink.LinkInfo
 }
 
 // InstallResult represents the result of a package installation
@@ -137,11 +139,13 @@ func (m *Manager) LoadPackage(name string) (*Package, error) {
 		}
 
 		file := PackageFile{
-			Source:     source,
-			Target:     m.configMgr.ExpandPath(target),
-			Executable: fileMapping.Executable,
-			Template:   fileMapping.Template,
-			Condition:  fileMapping.Condition,
+			Source:          source,
+			Target:          m.configMgr.ExpandPath(target),
+			Executable:      fileMapping.Executable,
+			Template:        fileMapping.Template,
+			TemplateVars:    fileMapping.TemplateVars,
+			RequiredSecrets: fileMapping.RequiredSecrets,
+			Condition:       fileMapping.Condition,
 		}
 
 		// Get link info
@@ -435,7 +439,7 @@ func (m *Manager) isPackageInstalled(pkg *Package) bool {
 }
 
 // runCommands executes a list of commands in the specified directory
-func (m *Manager) runCommands(commands []string, workDir string) error {
+func (m *Manager) runCommands(commands []string, _ string) error {
 	if len(commands) == 0 {
 		return nil
 	}
@@ -493,13 +497,38 @@ func (m *Manager) processTemplateFile(file PackageFile, vars map[string]any) err
 		return fmt.Errorf("template source file does not exist: %s", file.Source)
 	}
 
+	// Validate required secrets before processing
+	if len(file.RequiredSecrets) > 0 {
+		missingSecrets := m.templateEngine.ValidateRequiredSecrets(file.RequiredSecrets)
+		if len(missingSecrets) > 0 {
+			return fmt.Errorf("missing required secrets for %s: %v", file.Target, missingSecrets)
+		}
+	}
+
 	if m.dryRun {
 		fmt.Printf("[DRY-RUN] Would process template: %s -> %s\n", file.Source, file.Target)
 		return nil
 	}
 
+	// Load package-specific .env files if present
+	packageDir := filepath.Dir(file.Source)
+	if err := m.templateEngine.LoadEnvWithHierarchy(packageDir); err != nil {
+		if m.verbose {
+			fmt.Printf("Warning: Failed to load .env files from %s: %v\n", packageDir, err)
+		}
+	}
+
+	// Merge template variables from file mapping with package variables
+	allVars := make(map[string]any)
+	for k, v := range vars {
+		allVars[k] = v
+	}
+	for k, v := range file.TemplateVars {
+		allVars[k] = v
+	}
+
 	// Process the template file
-	if err := m.templateEngine.ProcessFileToFile(file.Source, file.Target, vars); err != nil {
+	if err := m.templateEngine.ProcessFileToFile(file.Source, file.Target, allVars); err != nil {
 		return fmt.Errorf("failed to process template file: %w", err)
 	}
 

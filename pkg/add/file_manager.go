@@ -260,6 +260,19 @@ func (fm *FileManager) copyFile(src, dst string) error {
 	return err
 }
 
+// shouldProcessAsTemplate checks if a file should be processed as a template
+func (fm *FileManager) shouldProcessAsTemplate(filePath string) bool {
+	return strings.HasSuffix(filePath, ".tmpl")
+}
+
+// stripTmplExtension removes .tmpl extension from file path
+func (fm *FileManager) stripTmplExtension(filePath string) string {
+	if strings.HasSuffix(filePath, ".tmpl") {
+		return filePath[:len(filePath)-5] // Remove ".tmpl"
+	}
+	return filePath
+}
+
 // updatePackageConfig updates or creates the package configuration file
 func (fm *FileManager) updatePackageConfig(configPath, relativeSource, targetPath string) error {
 	if fm.dryRun {
@@ -283,10 +296,19 @@ func (fm *FileManager) updatePackageConfig(configPath, relativeSource, targetPat
 		packageConfig.Files = make([]config.FileMapping, 0)
 	}
 
+	// Check if this is a template file
+	isTemplate := fm.shouldProcessAsTemplate(relativeSource)
+	
+	// For .tmpl files, strip the extension from the target path
+	finalTargetPath := targetPath
+	if isTemplate {
+		finalTargetPath = fm.stripTmplExtension(targetPath)
+	}
+
 	// Check if mapping already exists
 	var existingIndex = -1
 	for i, mapping := range packageConfig.Files {
-		if mapping.Target == targetPath {
+		if mapping.Target == finalTargetPath {
 			existingIndex = i
 			break
 		}
@@ -294,8 +316,9 @@ func (fm *FileManager) updatePackageConfig(configPath, relativeSource, targetPat
 
 	// Create new file mapping
 	newMapping := config.FileMapping{
-		Source: relativeSource,
-		Target: targetPath,
+		Source:   relativeSource,
+		Target:   finalTargetPath,
+		Template: isTemplate,
 	}
 
 	if existingIndex >= 0 {
