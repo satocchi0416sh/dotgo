@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -29,21 +30,21 @@ type AddResult struct {
 
 // RollbackOperation tracks operations that can be rolled back
 type RollbackOperation struct {
-	Type        string // "file_move", "config_update", "symlink_create"
-	SourcePath  string
-	TargetPath  string
-	BackupPath  string
-	Timestamp   time.Time
+	Type       string // "file_move", "config_update", "symlink_create"
+	SourcePath string
+	TargetPath string
+	BackupPath string
+	Timestamp  time.Time
 }
 
 // FileManager handles file operations for the add command
 type FileManager struct {
-	configMgr     *config.Manager
-	symlinkMgr    *symlink.Manager
-	rootDir       string
-	verbose       bool
-	dryRun        bool
-	rollbackOps   []RollbackOperation
+	configMgr   *config.Manager
+	symlinkMgr  *symlink.Manager
+	rootDir     string
+	verbose     bool
+	dryRun      bool
+	rollbackOps []RollbackOperation
 }
 
 // NewFileManager creates a new FileManager instance
@@ -78,15 +79,34 @@ func (fm *FileManager) AddFile(operation *AddOperation) (*AddResult, error) {
 	// Determine package directory and file paths
 	packageDir := filepath.Join(fm.rootDir, "packages", operation.PackageName)
 	filesDir := filepath.Join(packageDir, "files")
-	
-	// Get relative path from home for the target structure
-	processor := NewPathProcessor()
-	relPath, err := processor.GetRelativeToHome(operation.TargetPath)
-	if err != nil {
-		// If can't get relative path, use just the filename
-		relPath = filepath.Base(operation.TargetPath)
+
+	// Get relative path for the target structure
+	var relPath string
+	var err error
+
+	// Check if the source file is within the dotfiles root directory
+	if strings.HasPrefix(operation.SourcePath, fm.rootDir) {
+		// File is within dotfiles directory - use relative path from dotfiles root
+		relPath, err = filepath.Rel(fm.rootDir, operation.SourcePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get relative path from dotfiles root: %w", err)
+		}
+		if fm.verbose {
+			fmt.Printf("File is within dotfiles directory, using relative path: %s\n", relPath)
+		}
+	} else {
+		// File is outside dotfiles directory - use relative path from home
+		processor := NewPathProcessor()
+		relPath, err = processor.GetRelativeToHome(operation.SourcePath)
+		if err != nil {
+			// If can't get relative path, use just the filename
+			relPath = filepath.Base(operation.SourcePath)
+		}
+		if fm.verbose {
+			fmt.Printf("File is outside dotfiles directory, using home-relative path: %s\n", relPath)
+		}
 	}
-	
+
 	packageFilePath := filepath.Join(filesDir, relPath)
 	configFilePath := filepath.Join(packageDir, "dotgo.yaml")
 
@@ -113,7 +133,7 @@ func (fm *FileManager) AddFile(operation *AddOperation) (*AddResult, error) {
 		}
 		symlinkCreated = true
 	} else {
-		fmt.Printf("[DRY RUN] Would create symlink: %s → %s\n", 
+		fmt.Printf("[DRY RUN] Would create symlink: %s → %s\n",
 			operation.TargetPath, packageFilePath)
 	}
 
@@ -321,7 +341,7 @@ func (fm *FileManager) Rollback() error {
 	// Rollback in reverse order
 	for i := len(fm.rollbackOps) - 1; i >= 0; i-- {
 		op := fm.rollbackOps[i]
-		
+
 		if err := fm.rollbackOperation(op); err != nil {
 			errors = append(errors, fmt.Errorf("failed to rollback %s: %w", op.Type, err))
 		}
@@ -346,7 +366,7 @@ func (fm *FileManager) rollbackOperation(op RollbackOperation) error {
 	case "file_move":
 		// Move file back to original location
 		return os.Rename(op.SourcePath, op.TargetPath)
-	
+
 	case "config_update":
 		// For config updates, we would need to store the original config
 		// For now, just remove the config file if it was newly created
@@ -354,11 +374,11 @@ func (fm *FileManager) rollbackOperation(op RollbackOperation) error {
 			return os.Remove(op.TargetPath)
 		}
 		return nil
-	
+
 	case "directory_create":
 		// Remove empty directory if possible
 		return os.Remove(op.TargetPath)
-	
+
 	default:
 		return fmt.Errorf("unknown rollback operation type: %s", op.Type)
 	}
