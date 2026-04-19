@@ -2,17 +2,24 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/fatih/color"
+	"github.com/spf13/cobra"
 
-	"dotgo/pkg/config"
-	"dotgo/pkg/packages"
-	"dotgo/pkg/symlink"
+	"dotgo/internal/cmdutil"
+	"dotgo/internal/engine"
 )
+
+var (
+	// statusTags are the tags to filter which links to show status for
+	statusTags []string
+)
+
+func init() {
+	statusCmd.Flags().StringSliceVarP(&statusTags, "tags", "t", []string{}, "Tags to filter status (e.g., linux,work)")
+	rootCmd.AddCommand(statusCmd)
+}
 
 // statusCmd represents the status command
 var statusCmd = &cobra.Command{
@@ -21,251 +28,147 @@ var statusCmd = &cobra.Command{
 	Long: `Show the current status of your dotfiles installation.
 
 This command displays:
-• Repository information
-• Profile configuration
-• Package installation status  
-• Broken or missing symlinks
-• Overall health of the dotfiles setup
+• Which files are managed by dotgo
+• Whether symlinks exist and are correct
+• Which files would be applied with current tags
+• Any broken or missing symlinks
 
-The status command helps you quickly identify any issues with your
-dotfiles configuration and provides recommendations for fixes.`,
+Examples:
+  dotgo status                              # Show status of all files
+  dotgo status --tags work                  # Show only work-tagged files
+  dotgo status -t linux,personal            # Show linux and personal tagged files`,
 	RunE: runStatus,
 }
 
-func init() {
-	rootCmd.AddCommand(statusCmd)
-}
-
+// runStatus implements the status command logic
 func runStatus(cmd *cobra.Command, args []string) error {
-	// Get current working directory as dotfiles root
-	rootDir, err := os.Getwd()
+	// Initialize engine
+	eng, err := cmdutil.InitializeEngine(false, verbose)
 	if err != nil {
-		return fmt.Errorf("failed to get current directory: %w", err)
+		return err
 	}
 
-	// Initialize configuration manager
-	configMgr := config.NewManager(rootDir)
-	if err := configMgr.Load(); err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
+	// Process tags
+	tags := cmdutil.ProcessTags(statusTags)
+
+	// Get status
+	statuses, err := eng.Status(tags)
+	if err != nil {
+		return fmt.Errorf("failed to get status: %w", err)
 	}
 
-	// Get configuration
-	cfg := configMgr.GetConfig()
+	if len(statuses) == 0 {
+		fmt.Printf("%s No files are managed by dotgo\n", color.YellowString("ℹ️"))
+		fmt.Println("Use 'dotgo add <file>' to start managing files")
+		return nil
+	}
 
 	// Print header
-	fmt.Printf("%s dotgo Status Report\n", color.BlueString("📊"))
-	fmt.Printf("Repository: %s\n\n", rootDir)
-
-	// Repository information
-	fmt.Printf("%s Repository Information:\n", color.CyanString("📁"))
-	fmt.Printf("  Type: %s\n", cfg.Repository.Type)
-	if cfg.Repository.URL != "" {
-		fmt.Printf("  URL: %s\n", cfg.Repository.URL)
-	}
-	fmt.Printf("  Version: %s\n", cfg.Version)
-	fmt.Println()
-
-	// Current profile
-	profileName := cfg.Settings.DefaultProfile
-	profile, err := configMgr.GetProfile(profileName)
-	if err != nil {
-		return fmt.Errorf("failed to get profile '%s': %w", profileName, err)
-	}
-
-	fmt.Printf("%s Current Profile: %s\n", color.CyanString("👤"), color.YellowString(profileName))
-	if profile.Description != "" {
-		fmt.Printf("  Description: %s\n", profile.Description)
-	}
-	if len(profile.Packages) > 0 {
-		fmt.Printf("  Packages: %s\n", strings.Join(profile.Packages, ", "))
-	} else {
-		fmt.Printf("  Packages: %s\n", color.YellowString("none"))
-	}
-	if len(profile.Variables) > 0 {
-		fmt.Printf("  Variables: %d defined\n", len(profile.Variables))
+	fmt.Printf("%s Dotfiles Status\n", color.BlueString("📊"))
+	fmt.Printf("Repository: %s\n", eng.GetRootDir())
+	if len(tags) > 0 {
+		fmt.Printf("Filtering by tags: %s\n", strings.Join(tags, ", "))
 	}
 	fmt.Println()
 
-	// Initialize managers for package status
-	symlinkMgr := symlink.NewManager(
-		configMgr.GetBackupDir(),
-		viper.GetBool("dry-run"),
-		viper.GetBool("verbose"),
-	)
-
-	packageMgr := packages.NewManager(
-		configMgr,
-		symlinkMgr,
-		rootDir,
-		viper.GetBool("verbose"),
-		viper.GetBool("dry-run"),
-	)
-
-	// Get all packages
-	allPackages, err := packageMgr.List()
-	if err != nil {
-		return fmt.Errorf("failed to list packages: %w", err)
-	}
-
-	// Count installed packages
-	var installedCount int
-	var totalFiles int
-	var installedFiles int
-	var brokenLinks []string
-	var missingFiles []string
-
-	for _, pkg := range allPackages {
-		if pkg.Installed {
-			installedCount++
+	// Count statistics
+	var total, linked, broken, shouldApply int
+	for _, status := range statuses {
+		total++
+		if status.ShouldApply {
+			shouldApply++
 		}
-
-		// Check each file
-		for _, file := range pkg.Files {
-			totalFiles++
-
-			if file.LinkInfo == nil {
-				continue
-			}
-
-			if file.LinkInfo.Exists {
-				if file.LinkInfo.IsSymlink {
-					if file.LinkInfo.IsValid {
-						installedFiles++
-					} else {
-						brokenLinks = append(brokenLinks, file.Target)
-					}
-				} else {
-					// File exists but is not a symlink
-					missingFiles = append(missingFiles, fmt.Sprintf("%s (not a symlink)", file.Target))
-				}
-			} else {
-				missingFiles = append(missingFiles, file.Target)
+		if status.Exists {
+			if status.IsSymlink && status.IsCorrect {
+				linked++
+			} else if status.IsSymlink && !status.IsCorrect {
+				broken++
 			}
 		}
 	}
 
-	// Package status summary
-	fmt.Printf("%s Package Summary:\n", color.CyanString("📦"))
-	fmt.Printf("  Available: %d\n", len(allPackages))
-	fmt.Printf("  Installed: %s/%d\n", getStatusColor(installedCount, len(allPackages), installedCount), len(allPackages))
-	fmt.Printf("  Files: %s/%d linked\n", getStatusColor(installedFiles, totalFiles, installedFiles), totalFiles)
-	fmt.Println()
-
-	// Health status
-	var healthIssues []string
-	
-	if len(brokenLinks) > 0 {
-		healthIssues = append(healthIssues, fmt.Sprintf("%d broken symlinks", len(brokenLinks)))
-	}
-	
-	if len(missingFiles) > 0 {
-		healthIssues = append(healthIssues, fmt.Sprintf("%d missing files", len(missingFiles)))
-	}
-
-	fmt.Printf("%s Health Status: ", color.CyanString("🏥"))
-	if len(healthIssues) == 0 {
-		fmt.Printf("%s\n", color.GreenString("Healthy"))
-	} else {
-		fmt.Printf("%s (%s)\n", color.RedString("Issues found"), strings.Join(healthIssues, ", "))
+	// Print summary
+	fmt.Printf("%s Summary:\n", color.CyanString("📋"))
+	fmt.Printf("  Total files: %d\n", total)
+	fmt.Printf("  Should apply: %s\n", getCountColor(shouldApply, total, shouldApply))
+	fmt.Printf("  Correctly linked: %s\n", getCountColor(linked, shouldApply, linked))
+	if broken > 0 {
+		fmt.Printf("  Broken links: %s\n", color.RedString("%d", broken))
 	}
 	fmt.Println()
 
-	// Show detailed package status
-	if viper.GetBool("verbose") || len(healthIssues) > 0 {
-		fmt.Printf("%s Detailed Package Status:\n", color.CyanString("📋"))
-		
-		for _, pkg := range allPackages {
-			status := color.RedString("✗")
-			statusText := "Not installed"
-			
-			if pkg.Installed {
-				status = color.GreenString("✓")
-				statusText = "Installed"
-			}
-
-			fmt.Printf("  %s %s - %s\n", status, color.CyanString(pkg.Name), statusText)
-			
-			// Show file details if verbose or if there are issues
-			if viper.GetBool("verbose") || !pkg.Installed {
-				for _, file := range pkg.Files {
-					if file.LinkInfo == nil {
-						continue
-					}
-
-					fileStatus := getFileStatusIcon(file.LinkInfo)
-					fmt.Printf("    %s %s\n", fileStatus, file.Target)
-				}
-			}
-		}
-		fmt.Println()
+	// Print detailed status
+	fmt.Printf("%s File Status:\n", color.CyanString("📁"))
+	for _, status := range statuses {
+		printFileStatus(status)
 	}
 
-	// Show broken links if any
-	if len(brokenLinks) > 0 {
-		fmt.Printf("%s Broken Symlinks:\n", color.RedString("💔"))
-		for _, link := range brokenLinks {
-			fmt.Printf("  %s %s\n", color.RedString("✗"), link)
+	// Print recommendations
+	if shouldApply > linked || broken > 0 {
+		fmt.Printf("\n%s Recommendations:\n", color.BlueString("💡"))
+		if shouldApply > linked {
+			fmt.Printf("  • Run '%s' to create missing symlinks\n",
+				color.GreenString("dotgo apply"))
 		}
-		fmt.Println()
+		if broken > 0 {
+			fmt.Printf("  • Check and fix broken symlinks manually\n")
+		}
 	}
-
-	// Show missing files if any
-	if len(missingFiles) > 0 {
-		fmt.Printf("%s Missing Files:\n", color.YellowString("❓"))
-		for _, file := range missingFiles {
-			fmt.Printf("  %s %s\n", color.YellowString("?"), file)
-		}
-		fmt.Println()
-	}
-
-	// Recommendations
-	if len(healthIssues) > 0 {
-		fmt.Printf("%s Recommendations:\n", color.BlueString("💡"))
-		
-		if len(brokenLinks) > 0 {
-			fmt.Printf("  • Run '%s' to fix broken symlinks\n", color.GreenString("dotgo install --force"))
-		}
-		
-		if len(missingFiles) > 0 {
-			fmt.Printf("  • Run '%s' to install missing packages\n", color.GreenString("dotgo install"))
-		}
-		
-		fmt.Printf("  • Use '%s' for detailed package information\n", color.GreenString("dotgo packages status"))
-		fmt.Println()
-	}
-
-	// Configuration summary
-	fmt.Printf("%s Configuration:\n", color.CyanString("⚙️"))
-	fmt.Printf("  Config file: %s/.dotgo/config.yaml\n", rootDir)
-	fmt.Printf("  Backup directory: %s\n", configMgr.GetBackupDir())
-	fmt.Printf("  Symlink mode: %s\n", cfg.Settings.SymlinkMode)
-	fmt.Printf("  Conflict mode: %s\n", cfg.Settings.ConflictMode)
 
 	return nil
 }
 
-// getStatusColor returns a colored string based on current vs total values
-func getStatusColor(current, total int, value int) string {
+// printFileStatus prints the status of a single file
+func printFileStatus(status engine.LinkStatus) {
+	icon := "❓"
+	statusText := ""
+	colorFunc := color.WhiteString
+
+	if !status.ShouldApply {
+		icon = "⏭️"
+		statusText = "skipped (tags don't match)"
+		colorFunc = color.YellowString
+	} else if !status.Exists {
+		icon = "❌"
+		statusText = "missing symlink"
+		colorFunc = color.RedString
+	} else if !status.IsSymlink {
+		icon = "⚠️"
+		statusText = "exists but not a symlink"
+		colorFunc = color.YellowString
+	} else if !status.IsCorrect {
+		icon = "💔"
+		statusText = fmt.Sprintf("broken (points to %s)", status.LinkTarget)
+		colorFunc = color.RedString
+	} else {
+		icon = "✅"
+		statusText = "correctly linked"
+		colorFunc = color.GreenString
+	}
+
+	fmt.Printf("  %s %s - %s\n",
+		icon,
+		colorFunc(status.TargetPath),
+		statusText)
+
+	if verbose && status.Exists {
+		fmt.Printf("      Source: %s\n", status.SourcePath)
+		if status.IsSymlink {
+			fmt.Printf("      Target: %s\n", status.LinkTarget)
+		}
+		if status.BackupExists {
+			fmt.Printf("      Backup: available\n")
+		}
+	}
+}
+
+// getCountColor returns a colored count string based on current vs total
+func getCountColor(current, total int, value int) string {
 	if current == total && total > 0 {
 		return color.GreenString("%d", value)
 	} else if current > 0 {
 		return color.YellowString("%d", value)
 	} else {
 		return color.RedString("%d", value)
-	}
-}
-
-// getFileStatusIcon returns an appropriate icon for file status
-func getFileStatusIcon(linkInfo *symlink.LinkInfo) string {
-	if !linkInfo.Exists {
-		return color.RedString("✗")
-	} else if linkInfo.IsSymlink {
-		if linkInfo.IsValid {
-			return color.GreenString("✓")
-		} else {
-			return color.RedString("💔")
-		}
-	} else {
-		return color.YellowString("❓")
 	}
 }

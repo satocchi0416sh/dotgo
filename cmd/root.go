@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/fatih/color"
 )
 
 var (
@@ -19,19 +19,24 @@ var (
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "dotgo",
-	Short: "Modern dotfiles management tool",
-	Long: `dotgo is a modern dotfiles management tool written in Go.
-It provides package-based organization, symlink management, 
-and migration capabilities from traditional dotfiles setups.
+	Short: "Simple dotfiles management tool",
+	Long: `dotgo is a simple dotfiles management tool written in Go.
+It provides tag-based organization and symlink management for dotfiles.
 
 Features:
-  • Package-based dotfiles organization
-  • Intelligent symlink management 
-  • Profile system for different environments
-  • Template and variable support
-  • Migration from existing setups
-  • Homebrew integration`,
-	Version: "0.1.0",
+  • Simple YAML-based configuration (dotgo.yaml)
+  • Tag-based file organization
+  • Cross-platform symlink management
+  • Automatic backup and restore
+  • Dry-run support for safe operations
+
+Commands:
+  • init   - Initialize a new dotgo repository
+  • add    - Add files to dotfiles management
+  • apply  - Create symlinks for managed files  
+  • rm     - Remove files from management
+  • status - Show current status`,
+	Version: "0.2.0",
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -44,7 +49,7 @@ func init() {
 	cobra.OnInitialize(initConfig)
 
 	// Global flags
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.dotgo/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./dotgo.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done without making changes")
 
