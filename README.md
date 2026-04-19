@@ -19,7 +19,7 @@
 
 ```bash
 # 1. Install
-go install [github.com/yourusername/dotgo@latest](https://github.com/yourusername/dotgo@latest)
+go install github.com/satocchi0416sh/dotgo@latest
 
 # 2. Initialize in your dotfiles repo
 cd ~/dotfiles && dotgo init
