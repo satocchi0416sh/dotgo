@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"dotgo/internal/config"
+	"github.com/satocchi0416sh/dotgo/internal/config"
 )
 
 func TestNewEngine(t *testing.T) {

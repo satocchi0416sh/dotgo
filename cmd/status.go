@@ -7,8 +7,8 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"dotgo/internal/cmdutil"
-	"dotgo/internal/engine"
+	"github.com/satocchi0416sh/dotgo/internal/cmdutil"
+	"github.com/satocchi0416sh/dotgo/internal/engine"
 )
 
 var (

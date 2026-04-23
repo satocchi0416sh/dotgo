@@ -3,7 +3,7 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"dotgo/internal/cmdutil"
+	"github.com/satocchi0416sh/dotgo/internal/cmdutil"
 )
 
 // initCmd represents the init command

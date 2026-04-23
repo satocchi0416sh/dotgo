@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"dotgo/internal/errors"
+	"github.com/satocchi0416sh/dotgo/internal/errors"
 )
 
 // ExpandPath expands tilde (~) to home directory and environment variables in a path.
