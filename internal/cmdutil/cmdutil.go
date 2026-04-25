@@ -29,3 +29,11 @@ func ProcessTags(rawTags []string) []string {
 	}
 	return tags
 }
+
+// FormatTags formats tags for display
+func FormatTags(tags []string) string {
+	if len(tags) == 0 {
+		return "[no tags]"
+	}
+	return strings.Join(tags, ", ")
+}

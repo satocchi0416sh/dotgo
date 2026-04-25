@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"dotgo/internal/cmdutil"
 	"dotgo/internal/engine"
+	"dotgo/internal/ui"
 )
 
 var (
@@ -57,118 +57,111 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get status: %w", err)
 	}
 
+	// Initialize UI
+	uiRenderer := ui.New()
+
 	if len(statuses) == 0 {
-		fmt.Printf("%s No files are managed by dotgo\n", color.YellowString("ℹ️"))
-		fmt.Println("Use 'dotgo add <file>' to start managing files")
+		fmt.Println(uiRenderer.StatusMessage("info", "No files are managed by dotgo"))
+		fmt.Println(uiRenderer.Hint("Use 'dotgo add <file>' to start managing files"))
 		return nil
 	}
 
 	// Print header
-	fmt.Printf("%s Dotfiles Status\n", color.BlueString("📊"))
-	fmt.Printf("Repository: %s\n", eng.GetRootDir())
+	header := uiRenderer.Header("dotgo", "status")
+	fmt.Println(header)
+
 	if len(tags) > 0 {
-		fmt.Printf("Filtering by tags: %s\n", strings.Join(tags, ", "))
+		fmt.Printf("Filtering by tags: %s\n\n", strings.Join(tags, ", "))
 	}
-	fmt.Println()
 
 	// Count statistics
-	var total, linked, broken, shouldApply int
+	stats := map[string]int{
+		"total":    len(statuses),
+		"synced":   0,
+		"missing":  0,
+		"broken":   0,
+		"modified": 0,
+		"skipped":  0,
+	}
+
+	// Group statuses by category
+	var synced, missing, broken, modified, skipped []engine.LinkStatus
+
 	for _, status := range statuses {
-		total++
-		if status.ShouldApply {
-			shouldApply++
-		}
-		if status.Exists {
-			if status.IsSymlink && status.IsCorrect {
-				linked++
-			} else if status.IsSymlink && !status.IsCorrect {
-				broken++
-			}
+		if !status.ShouldApply {
+			skipped = append(skipped, status)
+			stats["skipped"]++
+		} else if status.IsCorrect {
+			synced = append(synced, status)
+			stats["synced"]++
+		} else if status.IsSymlink && !status.Exists {
+			broken = append(broken, status)
+			stats["broken"]++
+		} else if status.Exists && !status.IsSymlink {
+			modified = append(modified, status)
+			stats["modified"]++
+		} else if !status.Exists {
+			missing = append(missing, status)
+			stats["missing"]++
 		}
 	}
 
-	// Print summary
-	fmt.Printf("%s Summary:\n", color.CyanString("📋"))
-	fmt.Printf("  Total files: %d\n", total)
-	fmt.Printf("  Should apply: %s\n", getCountColor(shouldApply, total, shouldApply))
-	fmt.Printf("  Correctly linked: %s\n", getCountColor(linked, shouldApply, linked))
-	if broken > 0 {
-		fmt.Printf("  Broken links: %s\n", color.RedString("%d", broken))
-	}
-	fmt.Println()
-
-	// Print detailed status
-	fmt.Printf("%s File Status:\n", color.CyanString("📁"))
-	for _, status := range statuses {
-		printFileStatus(status)
+	// Print sections
+	if len(synced) > 0 {
+		items := make([]string, 0, len(synced))
+		for _, status := range synced {
+			items = append(items, uiRenderer.FileStatus("link", status.TargetPath, "→ "+status.LinkTarget, nil))
+		}
+		fmt.Println(uiRenderer.Section("TRACKED", items...))
+		fmt.Println()
 	}
 
-	// Print recommendations
-	if shouldApply > linked || broken > 0 {
-		fmt.Printf("\n%s Recommendations:\n", color.BlueString("💡"))
-		if shouldApply > linked {
-			fmt.Printf("  • Run '%s' to create missing symlinks\n",
-				color.GreenString("dotgo apply"))
+	if len(modified) > 0 {
+		items := make([]string, 0, len(modified))
+		for _, status := range modified {
+			items = append(items, uiRenderer.FileStatus("modified", status.TargetPath, "exists but not a symlink", nil))
 		}
-		if broken > 0 {
-			fmt.Printf("  • Check and fix broken symlinks manually\n")
+		section := uiRenderer.Section("MODIFIED", items...)
+		fmt.Println(section)
+		fmt.Println()
+	}
+
+	if len(missing) > 0 {
+		items := make([]string, 0, len(missing))
+		for _, status := range missing {
+			items = append(items, uiRenderer.FileStatus("missing", status.TargetPath, "missing symlink", nil))
 		}
+		section := uiRenderer.Section("MISSING", items...)
+		fmt.Println(section)
+		fmt.Println()
+	}
+
+	if len(broken) > 0 {
+		items := make([]string, 0, len(broken))
+		for _, status := range broken {
+			items = append(items, uiRenderer.FileStatus("broken", status.TargetPath, "→ "+status.LinkTarget, nil))
+		}
+		section := uiRenderer.Section("BROKEN LINKS", items...)
+		fmt.Println(section)
+		fmt.Println()
+	}
+
+	if len(skipped) > 0 && verbose {
+		items := make([]string, 0, len(skipped))
+		for _, status := range skipped {
+			items = append(items, uiRenderer.FileStatus("skip", status.TargetPath, "tags don't match", nil))
+		}
+		fmt.Println(uiRenderer.Section("SKIPPED", items...))
+		fmt.Println()
+	}
+
+	// Simple divider and action hint
+	if stats["missing"] > 0 || stats["broken"] > 0 || stats["modified"] > 0 {
+		divider := strings.Repeat("─", 48)
+		fmt.Println(divider)
+		fmt.Println(uiRenderer.StatusMessage("info", "Run `dotgo apply` to sync files."))
 	}
 
 	return nil
 }
 
-// printFileStatus prints the status of a single file
-func printFileStatus(status engine.LinkStatus) {
-	icon := "❓"
-	statusText := ""
-	colorFunc := color.WhiteString
-
-	if !status.ShouldApply {
-		icon = "⏭️"
-		statusText = "skipped (tags don't match)"
-		colorFunc = color.YellowString
-	} else if !status.Exists {
-		icon = "❌"
-		statusText = "missing symlink"
-		colorFunc = color.RedString
-	} else if !status.IsSymlink {
-		icon = "⚠️"
-		statusText = "exists but not a symlink"
-		colorFunc = color.YellowString
-	} else if !status.IsCorrect {
-		icon = "💔"
-		statusText = fmt.Sprintf("broken (points to %s)", status.LinkTarget)
-		colorFunc = color.RedString
-	} else {
-		icon = "✅"
-		statusText = "correctly linked"
-		colorFunc = color.GreenString
-	}
-
-	fmt.Printf("  %s %s - %s\n",
-		icon,
-		colorFunc(status.TargetPath),
-		statusText)
-
-	if verbose && status.Exists {
-		fmt.Printf("      Source: %s\n", status.SourcePath)
-		if status.IsSymlink {
-			fmt.Printf("      Target: %s\n", status.LinkTarget)
-		}
-		if status.BackupExists {
-			fmt.Printf("      Backup: available\n")
-		}
-	}
-}
-
-// getCountColor returns a colored count string based on current vs total
-func getCountColor(current, total int, value int) string {
-	if current == total && total > 0 {
-		return color.GreenString("%d", value)
-	} else if current > 0 {
-		return color.YellowString("%d", value)
-	} else {
-		return color.RedString("%d", value)
-	}
-}
