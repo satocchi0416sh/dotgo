@@ -9,9 +9,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 
-	"dotgo/internal/cmdutil"
-	"dotgo/internal/engine"
-	"dotgo/internal/ui"
+	"github.com/satocchi0416sh/dotgo/internal/cmdutil"
+	"github.com/satocchi0416sh/dotgo/internal/engine"
+	"github.com/satocchi0416sh/dotgo/internal/ui"
 )
 
 var (

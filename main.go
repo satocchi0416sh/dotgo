@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"dotgo/cmd"
+	"github.com/satocchi0416sh/dotgo/cmd"
 )
 
 func main() {

@@ -8,9 +8,9 @@ import (
 
 	"github.com/fatih/color"
 
-	"dotgo/internal/config"
-	"dotgo/internal/errors"
-	"dotgo/pkg/utils"
+	"github.com/satocchi0416sh/dotgo/internal/config"
+	"github.com/satocchi0416sh/dotgo/internal/errors"
+	"github.com/satocchi0416sh/dotgo/pkg/utils"
 )
 
 // Engine handles the core dotfile operations

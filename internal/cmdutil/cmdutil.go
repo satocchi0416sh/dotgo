@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"dotgo/internal/engine"
+	"github.com/satocchi0416sh/dotgo/internal/engine"
 )
 
 // InitializeEngine creates and returns an initialized engine instance

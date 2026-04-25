@@ -1,4 +1,4 @@
-module dotgo
+module github.com/satocchi0416sh/dotgo
 
 go 1.24.2
 

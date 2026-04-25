@@ -7,8 +7,8 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 
-	"dotgo/internal/cmdutil"
-	"dotgo/internal/ui"
+	"github.com/satocchi0416sh/dotgo/internal/cmdutil"
+	"github.com/satocchi0416sh/dotgo/internal/ui"
 )
 
 var (
