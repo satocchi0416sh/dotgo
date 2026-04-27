@@ -310,13 +310,14 @@ func (e *Engine) applyLink(targetPath string, linkSpec config.LinkSpec) error {
 	sourcePath := filepath.Join(rootDir, "files", targetPath)
 	fullTargetPath := filepath.Join(homeDir, targetPath)
 
-	// Check if source exists
-	exists, err := utils.FileExists(sourcePath)
+	// Source may be either a regular file or a directory; os.Symlink supports both,
+	// so we accept any existing entry (PathExists rather than FileExists).
+	exists, err := utils.PathExists(sourcePath)
 	if err != nil {
-		return fmt.Errorf("failed to check source file: %w", err)
+		return fmt.Errorf("failed to check source path: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("source file does not exist: %s", sourcePath)
+		return fmt.Errorf("source path does not exist: %s", sourcePath)
 	}
 
 	// Check if target already exists and is correct

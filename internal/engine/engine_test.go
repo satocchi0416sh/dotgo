@@ -280,6 +280,68 @@ func TestEngine_Apply(t *testing.T) {
 	}
 }
 
+// TestEngine_applyLink_DirectorySource verifies that applyLink creates a
+// symlink for a directory source. Previously dotgo rejected directory sources
+// because the existence check used FileExists, which returns false for IsDir
+// paths. This test calls applyLink directly to isolate the source-check fix
+// from unrelated manifest persistence behavior covered by other tests.
+func TestEngine_applyLink_DirectorySource(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "apply-dir-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	homeDir, err := os.MkdirTemp("", "apply-dir-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(homeDir)
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", homeDir)
+	defer os.Setenv("HOME", originalHome)
+
+	eng := NewEngine(tmpDir, false, false)
+
+	// Create a directory under files/ with a couple of nested entries.
+	srcDir := filepath.Join(tmpDir, "files", ".config", "myapp")
+	if err := os.MkdirAll(srcDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "config.toml"), []byte("k = 1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(srcDir, "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := eng.applyLink(".config/myapp", config.LinkSpec{}); err != nil {
+		t.Fatalf("applyLink() error = %v", err)
+	}
+
+	targetPath := filepath.Join(homeDir, ".config", "myapp")
+	info, err := os.Lstat(targetPath)
+	if err != nil {
+		t.Fatalf("expected symlink at %s, got error: %v", targetPath, err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected symlink, got mode %v", info.Mode())
+	}
+
+	resolved, err := os.Readlink(targetPath)
+	if err != nil {
+		t.Fatalf("Readlink error: %v", err)
+	}
+	if resolved != srcDir {
+		t.Errorf("symlink target = %s, want %s", resolved, srcDir)
+	}
+
+	if _, err := os.Stat(filepath.Join(targetPath, "config.toml")); err != nil {
+		t.Errorf("nested file unreachable through symlink: %v", err)
+	}
+}
+
 func TestEngine_Remove(t *testing.T) {
 	// Create temp directory
 	tmpDir, err := os.MkdirTemp("", "remove-test")
