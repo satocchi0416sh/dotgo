@@ -193,10 +193,11 @@ func (e *Engine) Remove(targetPath string, restore bool) error {
 
 	fullTargetPath := filepath.Join(homeDir, targetPath)
 
-	// Remove symlink if it exists
-	exists, err := utils.FileExists(fullTargetPath)
+	// Use PathExists so that directory-targeted symlinks are detected too;
+	// FileExists would skip them because os.Stat dereferences and reports IsDir.
+	exists, err := utils.PathExists(fullTargetPath)
 	if err != nil {
-		return fmt.Errorf("failed to check target file: %w", err)
+		return fmt.Errorf("failed to check target path: %w", err)
 	}
 
 	if exists {
