@@ -137,6 +137,26 @@ func DirExists(path string) (bool, error) {
 	return info.IsDir(), nil
 }
 
+// PathExists checks if any filesystem entry exists at the given path,
+// including regular files, directories, and symbolic links (even if dangling).
+// Use this when callers need to detect existence regardless of entry type—
+// for example, dotgo's apply step accepts both file and directory sources.
+func PathExists(path string) (bool, error) {
+	expandedPath, err := ExpandPath(path)
+	if err != nil {
+		return false, fmt.Errorf("failed to expand path: %w", err)
+	}
+
+	if _, err := os.Lstat(expandedPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
+}
+
 // ReadFile reads the entire contents of a file
 func ReadFile(path string) ([]byte, error) {
 	expandedPath, err := ExpandPath(path)
