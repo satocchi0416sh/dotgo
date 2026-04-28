@@ -375,14 +375,12 @@ func (e *Engine) backupFile(filePath string) error {
 		return nil
 	}
 
-	// Copy to backup location
-	if err := utils.CopyFile(filePath, backupPath); err != nil {
-		return fmt.Errorf("failed to copy to backup: %w", err)
-	}
-
-	// Remove original
-	if err := os.Remove(filePath); err != nil {
-		return fmt.Errorf("failed to remove original: %w", err)
+	// Move existing entry into the backup location. Rename works for regular
+	// files, directories, and symlinks alike, and is atomic on the same
+	// filesystem — which is what we want when the source is a managed
+	// directory (e.g. ~/.claude/skills/<name>).
+	if err := os.Rename(filePath, backupPath); err != nil {
+		return fmt.Errorf("failed to move to backup: %w", err)
 	}
 
 	fmt.Printf("%s Backed up: %s -> %s\n",
@@ -396,7 +394,7 @@ func (e *Engine) restoreOriginal(targetPath string) error {
 	fileName := filepath.Base(targetPath)
 	backupPath := filepath.Join(e.backupDir, fileName+".backup")
 
-	exists, err := utils.FileExists(backupPath)
+	exists, err := utils.PathExists(backupPath)
 	if err != nil {
 		return fmt.Errorf("failed to check backup: %w", err)
 	}
@@ -417,7 +415,7 @@ func (e *Engine) restoreOriginal(targetPath string) error {
 		return nil
 	}
 
-	if err := utils.CopyFile(backupPath, fullTargetPath); err != nil {
+	if err := os.Rename(backupPath, fullTargetPath); err != nil {
 		return fmt.Errorf("failed to restore backup: %w", err)
 	}
 
@@ -431,7 +429,7 @@ func (e *Engine) hasBackup(targetPath string) bool {
 	fileName := filepath.Base(targetPath)
 	backupPath := filepath.Join(e.backupDir, fileName+".backup")
 
-	exists, _ := utils.FileExists(backupPath)
+	exists, _ := utils.PathExists(backupPath)
 	return exists
 }
 

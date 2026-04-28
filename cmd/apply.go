@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/satocchi0416sh/dotgo/internal/cmdutil"
 	"github.com/satocchi0416sh/dotgo/internal/engine"
@@ -200,14 +202,18 @@ func runApply(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Run interactive progress if not in verbose mode
-	if !verbose {
+	// The interactive bubbletea UI requires a TTY (it opens /dev/tty for
+	// input), so fall back to the verbose path when stdin is not a terminal
+	// — e.g. CI, redirected input, or harnesses that capture stdout.
+	interactive := !verbose && term.IsTerminal(int(os.Stdin.Fd()))
+
+	if interactive {
 		p := tea.NewProgram(initialApplyModel(eng, statuses, tags, dryRun))
 		if _, err := p.Run(); err != nil {
 			return err
 		}
 	} else {
-		// In verbose mode, apply without animation
+		// Non-interactive mode: apply without animation.
 		err = eng.Apply(tags)
 		if err != nil {
 			return err
