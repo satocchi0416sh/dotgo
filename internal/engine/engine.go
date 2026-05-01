@@ -59,12 +59,19 @@ func (e *Engine) Add(filePath string, tags []string) error {
 		return fmt.Errorf(errors.ErrExpandPath, err)
 	}
 
-	exists, err := utils.FileExists(sourceFile)
+	// Use PathExists so that directories are accepted; FileExists would skip
+	// them because os.Stat reports IsDir for directory targets.
+	exists, err := utils.PathExists(sourceFile)
 	if err != nil {
-		return fmt.Errorf("failed to check file: %w", err)
+		return fmt.Errorf("failed to check source path: %w", err)
 	}
 	if !exists {
-		return fmt.Errorf("file does not exist: %s", sourceFile)
+		return fmt.Errorf("path does not exist: %s", sourceFile)
+	}
+
+	isDir, err := utils.DirExists(sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to inspect source path: %w", err)
 	}
 
 	// Determine home-relative target path
@@ -75,14 +82,14 @@ func (e *Engine) Add(filePath string, tags []string) error {
 
 	var targetPath string
 	if strings.HasPrefix(sourceFile, homeDir) {
-		// File is already in home, get relative path
+		// Source is already in home, get relative path
 		relPath, err := filepath.Rel(homeDir, sourceFile)
 		if err != nil {
 			return fmt.Errorf("failed to get relative path: %w", err)
 		}
 		targetPath = relPath
 	} else {
-		// File is outside home, use basename
+		// Source is outside home, use basename
 		targetPath = filepath.Base(sourceFile)
 	}
 
@@ -90,19 +97,27 @@ func (e *Engine) Add(filePath string, tags []string) error {
 	rootDir := e.configMgr.GetRootDir()
 	destPath := filepath.Join(rootDir, "files", targetPath)
 
-	// Ensure destination directory exists
+	// Ensure destination's parent directory exists. For files this is the parent
+	// of destPath; for directories the destPath itself acts as the parent and
+	// CopyDir will create it.
 	destDir := filepath.Dir(destPath)
 	if err := utils.EnsureDir(destDir); err != nil {
 		return fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
-	// Copy file to dotfiles directory
+	// Copy source to dotfiles directory (file or recursive directory copy).
 	if e.dryRun {
 		fmt.Printf("%s [DRY-RUN] Would copy: %s -> %s\n",
 			color.CyanString("ℹ️"), sourceFile, destPath)
 	} else {
-		if err := utils.CopyFile(sourceFile, destPath); err != nil {
-			return fmt.Errorf("failed to copy file: %w", err)
+		if isDir {
+			if err := utils.CopyDir(sourceFile, destPath); err != nil {
+				return fmt.Errorf("failed to copy directory: %w", err)
+			}
+		} else {
+			if err := utils.CopyFile(sourceFile, destPath); err != nil {
+				return fmt.Errorf("failed to copy file: %w", err)
+			}
 		}
 		fmt.Printf("%s Copied: %s -> %s\n",
 			color.GreenString("✓"), sourceFile, destPath)

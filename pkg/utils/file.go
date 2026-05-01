@@ -69,6 +69,59 @@ func CopyFile(src, dst string) error {
 	return nil
 }
 
+// CopyDir recursively copies a directory tree from src to dst, preserving permissions.
+// If dst already exists, files will be overwritten on a per-file basis; pre-existing
+// extra files in dst are left in place. Symlinks within src are skipped (their targets
+// are not followed) so that we never copy outside the requested tree by accident.
+func CopyDir(src, dst string) error {
+	srcExpanded, err := ExpandPath(src)
+	if err != nil {
+		return fmt.Errorf("failed to expand source path: %w", err)
+	}
+
+	dstExpanded, err := ExpandPath(dst)
+	if err != nil {
+		return fmt.Errorf("failed to expand destination path: %w", err)
+	}
+
+	srcInfo, err := os.Stat(srcExpanded)
+	if err != nil {
+		return fmt.Errorf("failed to stat source directory: %w", err)
+	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source is not a directory: %s", srcExpanded)
+	}
+
+	return filepath.Walk(srcExpanded, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		rel, err := filepath.Rel(srcExpanded, path)
+		if err != nil {
+			return fmt.Errorf("failed to derive relative path: %w", err)
+		}
+		target := filepath.Join(dstExpanded, rel)
+
+		switch {
+		case info.IsDir():
+			if err := os.MkdirAll(target, info.Mode()); err != nil {
+				return fmt.Errorf("failed to create directory %s: %w", target, err)
+			}
+			return nil
+		case info.Mode()&os.ModeSymlink != 0:
+			// Skip symlinks to avoid following them outside the source tree.
+			// Callers can re-add such files individually if needed.
+			return nil
+		case info.Mode().IsRegular():
+			return CopyFile(path, target)
+		default:
+			// Skip device files, named pipes, sockets, etc.
+			return nil
+		}
+	})
+}
+
 // CopyFileWithBackup copies a file from src to dst, creating a backup of dst if it exists.
 // The backup file will have a .backup extension.
 func CopyFileWithBackup(src, dst string) (string, error) {
