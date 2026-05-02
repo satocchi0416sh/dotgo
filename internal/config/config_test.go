@@ -94,7 +94,7 @@ func TestLinkSpec_ShouldApply(t *testing.T) {
 			linkSpec:      LinkSpec{Tags: []string{"darwin", "linux"}},
 			requestedTags: []string{},
 			currentOS:     "darwin",
-			expected:      false, // darwin tag matches but linux doesn't
+			expected:      true, // current OS (darwin) is among the tags, so it applies
 		},
 		{
 			name:          "no requested tags with non-OS tags",
@@ -178,15 +178,7 @@ links:
 		{
 			name:       "file not found",
 			setupFiles: map[string]string{},
-			wantErr:    false, // Load creates default manifest if not found
-			checkResult: func(t *testing.T, m *Manager) {
-				if m.manifest == nil {
-					t.Error("manifest is nil after load")
-				}
-				if m.manifest.Version != 1 {
-					t.Errorf("Version = %d, expected 1", m.manifest.Version)
-				}
-			},
+			wantErr:    true,
 		},
 		{
 			name: "invalid yaml",
@@ -330,8 +322,8 @@ func TestManager_LinkOperations(t *testing.T) {
 		}
 	})
 
-	// Load manifest
-	if err := manager.Load(); err != nil {
+	// Initialize manifest (creates file and loads it)
+	if err := manager.Initialize(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -400,8 +392,8 @@ func TestManager_ListLinks(t *testing.T) {
 		}
 	})
 
-	// Load and populate manifest
-	if err := manager.Load(); err != nil {
+	// Initialize and populate manifest
+	if err := manager.Initialize(); err != nil {
 		t.Fatal(err)
 	}
 

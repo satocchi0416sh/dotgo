@@ -103,7 +103,7 @@ func (ui *UI) Section(title string, items ...string) string {
 	var output strings.Builder
 	
 	// Simple section header with uppercase
-	header := ui.styles.Subtitle.Copy().
+	header := ui.styles.Subtitle.
 		Bold(true).
 		MarginTop(1).
 		Render(strings.ToUpper(title))
@@ -160,7 +160,7 @@ func (ui *UI) Summary(stats map[string]int) string {
 		line := fmt.Sprintf("  %s %s: %s",
 			style.Render(icon),
 			label,
-			style.Copy().Bold(true).Render(fmt.Sprintf("%d", value)),
+			style.Bold(true).Render(fmt.Sprintf("%d", value)),
 		)
 		lines = append(lines, line)
 	}
@@ -226,12 +226,12 @@ func (ui *UI) CodeBlock(code string) string {
 // Badge renders a badge
 func (ui *UI) Badge(text string) string {
 	// Simple badge using accent color
-	return ui.styles.Info.Copy().Bold(true).Render(text)
+	return ui.styles.Info.Bold(true).Render(text)
 }
 
 // Link renders a hyperlink-style text
 func (ui *UI) Link(text string) string {
-	return ui.styles.Info.Copy().
+	return ui.styles.Info.
 		Underline(true).
 		Render(text)
 }
@@ -248,7 +248,7 @@ func (ui *UI) Duration(d time.Duration) string {
 
 // Hint renders a hint message
 func (ui *UI) Hint(message string) string {
-	return ui.styles.Muted.Copy().
+	return ui.styles.Muted.
 		Italic(true).
 		Render(fmt.Sprintf("💡 %s", message))
 }
