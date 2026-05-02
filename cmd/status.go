@@ -14,10 +14,12 @@ import (
 var (
 	// statusTags are the tags to filter which links to show status for
 	statusTags []string
+	statusFlat bool
 )
 
 func init() {
 	statusCmd.Flags().StringSliceVarP(&statusTags, "tags", "t", []string{}, "Tags to filter status (e.g., linux,work)")
+	statusCmd.Flags().BoolVar(&statusFlat, "flat", false, "Use legacy section-based output")
 	rootCmd.AddCommand(statusCmd)
 }
 
@@ -74,35 +76,38 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Filtering by tags: %s\n\n", strings.Join(tags, ", "))
 	}
 
-	// Count statistics
-	stats := map[string]int{
-		"total":    len(statuses),
-		"synced":   0,
-		"missing":  0,
-		"broken":   0,
-		"modified": 0,
-		"skipped":  0,
+	var modifiedN, missingN, brokenN int
+	if statusFlat {
+		modifiedN, missingN, brokenN = printFlatSections(uiRenderer, statuses, verbose)
+	} else {
+		modifiedN, missingN, brokenN = printStatusTree(uiRenderer, statuses, verbose)
 	}
 
+	// Simple divider and action hint
+	if missingN > 0 || brokenN > 0 || modifiedN > 0 {
+		divider := strings.Repeat("─", 48)
+		fmt.Println(divider)
+		fmt.Println(uiRenderer.StatusMessage("info", "Run `dotgo apply` to sync files."))
+	}
+
+	return nil
+}
+
+func printFlatSections(uiRenderer *ui.UI, statuses []engine.LinkStatus, verbose bool) (modifiedN, missingN, brokenN int) {
 	// Group statuses by category
 	var synced, missing, broken, modified, skipped []engine.LinkStatus
 
 	for _, status := range statuses {
 		if !status.ShouldApply {
 			skipped = append(skipped, status)
-			stats["skipped"]++
 		} else if status.IsCorrect {
 			synced = append(synced, status)
-			stats["synced"]++
 		} else if status.IsSymlink && !status.Exists {
 			broken = append(broken, status)
-			stats["broken"]++
 		} else if status.Exists && !status.IsSymlink {
 			modified = append(modified, status)
-			stats["modified"]++
 		} else if !status.Exists {
 			missing = append(missing, status)
-			stats["missing"]++
 		}
 	}
 
@@ -155,13 +160,28 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 
-	// Simple divider and action hint
-	if stats["missing"] > 0 || stats["broken"] > 0 || stats["modified"] > 0 {
-		divider := strings.Repeat("─", 48)
-		fmt.Println(divider)
-		fmt.Println(uiRenderer.StatusMessage("info", "Run `dotgo apply` to sync files."))
-	}
-
-	return nil
+	return len(modified), len(missing), len(broken)
 }
 
+func printStatusTree(uiRenderer *ui.UI, statuses []engine.LinkStatus, verbose bool) (modifiedN, missingN, brokenN int) {
+	root := ui.BuildStatusTree(statuses, verbose)
+	fmt.Println(uiRenderer.StatusTree(root))
+	fmt.Println()
+
+	for _, status := range statuses {
+		if !status.ShouldApply {
+			continue
+		}
+		if status.IsCorrect {
+			continue
+		}
+		if status.IsSymlink && !status.Exists {
+			brokenN++
+		} else if status.Exists && !status.IsSymlink {
+			modifiedN++
+		} else if !status.Exists {
+			missingN++
+		}
+	}
+	return modifiedN, missingN, brokenN
+}

@@ -19,7 +19,7 @@ type UI struct {
 func New() *UI {
 	s := spinner.New()
 	s.Spinner = spinner.Line
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
 	return &UI{
 		styles:  NewStyles(),
