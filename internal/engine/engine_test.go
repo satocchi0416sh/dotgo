@@ -190,6 +190,9 @@ func TestEngine_Status(t *testing.T) {
 	// Add some test links
 	eng.configMgr.AddLink(".zshrc", config.LinkSpec{Tags: []string{"common"}})
 	eng.configMgr.AddLink(".vimrc", config.LinkSpec{Tags: []string{"vim"}})
+	if err := eng.configMgr.Save(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Get status
 	statuses, err := eng.Status([]string{"common"})
@@ -252,6 +255,9 @@ func TestEngine_Apply(t *testing.T) {
 
 	// Add link to manifest
 	eng.configMgr.AddLink(".testrc", config.LinkSpec{Tags: []string{"test"}})
+	if err := eng.configMgr.Save(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Test dry-run first
 	eng.dryRun = true
@@ -360,6 +366,9 @@ func TestEngine_Remove(t *testing.T) {
 
 	// Add a test link
 	eng.configMgr.AddLink(".testrc", config.LinkSpec{Tags: []string{"test"}})
+	if err := eng.configMgr.Save(); err != nil {
+		t.Fatal(err)
+	}
 
 	// Test Remove
 	err = eng.Remove(".testrc", false)

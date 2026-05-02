@@ -55,14 +55,8 @@ func (l *LinkSpec) ShouldApply(requestedTags []string) bool {
 		return false
 	}
 
-	// If no requested tags, apply if no non-OS tags or current OS matches
+	// With no requested tags, non-OS tags do not filter — they only narrow when explicitly requested.
 	if len(requestedTags) == 0 {
-		// Apply if no non-OS tags exist, or if OS tag matches
-		for _, tag := range l.Tags {
-			if tag != "darwin" && tag != "linux" && tag != "windows" {
-				return false // Has non-OS tags, but none requested
-			}
-		}
 		return true
 	}
 
