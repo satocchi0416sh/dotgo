@@ -54,8 +54,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done without making changes")
 
 	// Bind flags to viper
-	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
-	viper.BindPFlag("dry-run", rootCmd.PersistentFlags().Lookup("dry-run"))
+	cobra.CheckErr(viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose")))
+	cobra.CheckErr(viper.BindPFlag("dry-run", rootCmd.PersistentFlags().Lookup("dry-run")))
 }
 
 // initConfig reads in config file and ENV variables if set.
