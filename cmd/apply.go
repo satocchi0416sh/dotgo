@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbletea"
@@ -51,6 +50,7 @@ Examples:
 type applyModel struct {
 	spinner  spinner.Model
 	statuses []engine.LinkStatus
+	results  []engine.ApplyResult
 	current  int
 	done     bool
 	err      error
@@ -63,7 +63,7 @@ type applyModel struct {
 func initialApplyModel(eng *engine.Engine, statuses []engine.LinkStatus, tags []string, dryRun bool) applyModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	return applyModel{
 		spinner:  s,
 		statuses: statuses,
@@ -83,28 +83,26 @@ func (m applyModel) processNext() tea.Cmd {
 		if m.current >= len(m.statuses) {
 			return doneMsg{}
 		}
-
 		status := m.statuses[m.current]
 		if !status.ShouldApply {
-			return nextMsg{}
+			return nextMsg{result: engine.ApplyResult{
+				TargetPath: status.TargetPath,
+				Outcome:    engine.OutcomeSkipped,
+				Detail:     "tags don't match",
+			}}
 		}
-
-		// Simulate work with a small delay for visual effect
-		time.Sleep(100 * time.Millisecond)
-
-		if !m.dryRun {
-			// Actually apply the link
-			err := m.eng.Apply(m.tags)
-			if err != nil {
-				return errMsg{err}
-			}
+		if status.IsCorrect {
+			return nextMsg{result: engine.ApplyResult{
+				TargetPath: status.TargetPath,
+				Outcome:    engine.OutcomeSkipped,
+				Detail:     "already linked",
+			}}
 		}
-
-		return nextMsg{}
+		return nextMsg{result: m.eng.ApplyOne(status.TargetPath)}
 	}
 }
 
-type nextMsg struct{}
+type nextMsg struct{ result engine.ApplyResult }
 type doneMsg struct{}
 type errMsg struct{ err error }
 
@@ -116,8 +114,10 @@ func (m applyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case nextMsg:
+		m.results = append(m.results, msg.result)
 		m.current++
-		return m, m.processNext()
+		line := renderApplyLine(m.uiRender, msg.result)
+		return m, tea.Batch(tea.Println(line), m.processNext())
 
 	case doneMsg:
 		m.done = true
@@ -150,8 +150,24 @@ func (m applyModel) View() string {
 	}
 
 	status := m.statuses[m.current]
-	progress := m.uiRender.Progress(m.current+1, len(m.statuses), status.TargetPath)
-	return fmt.Sprintf("%s %s", m.spinner.View(), progress)
+	return fmt.Sprintf("%s Applying %d/%d: %s",
+		m.spinner.View(), m.current+1, len(m.statuses), status.TargetPath)
+}
+
+// renderApplyLine maps an ApplyResult into a one-line styled status string.
+func renderApplyLine(uiR *ui.UI, r engine.ApplyResult) string {
+	switch r.Outcome {
+	case engine.OutcomeApplied:
+		return uiR.StatusMessage("success", fmt.Sprintf("%s %s", r.TargetPath, r.Detail))
+	case engine.OutcomeSkipped:
+		return uiR.StatusMessage("skip", fmt.Sprintf("%s %s", r.TargetPath, r.Detail))
+	case engine.OutcomeFailed:
+		return uiR.StatusMessage("error", fmt.Sprintf("%s: %s", r.TargetPath, r.Detail))
+	case engine.OutcomeDryRun:
+		return uiR.StatusMessage("warning", fmt.Sprintf("[DRY-RUN] %s %s", r.TargetPath, r.Detail))
+	default:
+		return uiR.StatusMessage("info", fmt.Sprintf("%s %s", r.TargetPath, r.Detail))
+	}
 }
 
 // runApply implements the apply command logic
@@ -207,22 +223,49 @@ func runApply(cmd *cobra.Command, args []string) error {
 	// — e.g. CI, redirected input, or harnesses that capture stdout.
 	interactive := !verbose && term.IsTerminal(int(os.Stdin.Fd()))
 
+	var results []engine.ApplyResult
+
 	if interactive {
 		p := tea.NewProgram(initialApplyModel(eng, statuses, tags, dryRun))
-		if _, err := p.Run(); err != nil {
+		finalModel, err := p.Run()
+		if err != nil {
 			return err
+		}
+		if am, ok := finalModel.(applyModel); ok {
+			results = am.results
+			if am.err != nil {
+				return am.err
+			}
 		}
 	} else {
 		// Non-interactive mode: apply without animation.
-		err = eng.Apply(tags)
+		results, err = eng.Apply(tags)
 		if err != nil {
 			return err
+		}
+		for _, r := range results {
+			fmt.Println(renderApplyLine(uiRenderer, r))
+		}
+	}
+
+	// Tally counts. Dry-run results count as "applied" for summary purposes
+	// since they reflect would-have-been-applied work.
+	var applied, failed, skipped int
+	for _, r := range results {
+		switch r.Outcome {
+		case engine.OutcomeApplied, engine.OutcomeDryRun:
+			applied++
+		case engine.OutcomeFailed:
+			failed++
+		case engine.OutcomeSkipped:
+			skipped++
 		}
 	}
 
 	// Show summary
 	fmt.Println()
-	fmt.Println(uiRenderer.StatusMessage("success", fmt.Sprintf("Successfully applied %d files!", toApply)))
+	fmt.Println(uiRenderer.StatusMessage("info",
+		fmt.Sprintf("Successfully applied %d / Failed %d / Skipped %d", applied, failed, skipped)))
 
 	// Show next steps
 	fmt.Println()

@@ -21,6 +21,26 @@ type Engine struct {
 	verbose   bool
 }
 
+// Outcomes for ApplyResult. Strings are stable and may appear in user-facing
+// output / structured logs; do not rename without auditing call sites.
+const (
+	OutcomeApplied = "applied"
+	OutcomeSkipped = "skipped"
+	OutcomeFailed  = "failed"
+	OutcomeDryRun  = "dry-run"
+)
+
+// ApplyResult is the structured outcome of applying a single link. Apply
+// returns one per link (plus an extra Failed entry if a post-apply hook
+// errors) so orchestrators can render output and tally counts without
+// parsing free-form text.
+type ApplyResult struct {
+	TargetPath string
+	Outcome    string
+	Detail     string
+	Err        error
+}
+
 // NewEngine creates a new engine instance
 func NewEngine(rootDir string, dryRun, verbose bool) *Engine {
 	configMgr := config.NewManager(rootDir)
@@ -146,45 +166,51 @@ func (e *Engine) Add(filePath string, tags []string) error {
 	return nil
 }
 
-// Apply creates symlinks for all applicable files
-func (e *Engine) Apply(requestedTags []string) error {
+// Apply creates symlinks for all applicable files and returns a result per
+// link (plus an additional failed entry per failing post-apply hook).
+func (e *Engine) Apply(requestedTags []string) ([]ApplyResult, error) {
 	// Load manifest
 	if err := e.configMgr.Load(); err != nil {
-		return fmt.Errorf(errors.ErrLoadManifest, err)
+		return nil, fmt.Errorf(errors.ErrLoadManifest, err)
 	}
 
 	manifest := e.configMgr.GetManifest()
 	if manifest == nil {
-		return fmt.Errorf("no manifest loaded")
+		return nil, fmt.Errorf("no manifest loaded")
 	}
 
-	// Get links that should be applied
 	links := e.configMgr.ListLinks(requestedTags)
-	if len(links) == 0 {
-		fmt.Printf("%s No links to apply\n", color.YellowString("⏭️"))
-		return nil
-	}
+	results := make([]ApplyResult, 0, len(links))
 
-	fmt.Printf("Applying %d link(s)...\n", len(links))
-
-	// Apply each link
 	for targetPath, linkSpec := range links {
-		if err := e.applyLink(targetPath, linkSpec); err != nil {
-			fmt.Printf("%s Failed to apply %s: %v\n",
-				color.RedString("✗"), targetPath, err)
+		res := e.applyLink(targetPath)
+		results = append(results, res)
+
+		// Skip hooks for failed links so we don't compound failures.
+		if res.Outcome == OutcomeFailed {
 			continue
 		}
 
-		// Run post-apply hooks if any
 		if hook, exists := linkSpec.Hooks["post_apply"]; exists {
 			if err := e.runHook(hook, targetPath); err != nil {
-				fmt.Printf("%s Hook failed for %s: %v\n",
-					color.YellowString("⚠️"), targetPath, err)
+				results = append(results, ApplyResult{
+					TargetPath: targetPath + " (hook)",
+					Outcome:    OutcomeFailed,
+					Err:        err,
+					Detail:     err.Error(),
+				})
 			}
 		}
 	}
 
-	return nil
+	return results, nil
+}
+
+// ApplyOne applies a single link and returns its result. Hooks are NOT run
+// here; orchestrators (e.g. cmd/apply.go) drive per-link calls and may
+// invoke hooks separately.
+func (e *Engine) ApplyOne(targetPath string) ApplyResult {
+	return e.applyLink(targetPath)
 }
 
 // Remove removes a link from the manifest and optionally restores the original file
@@ -315,11 +341,21 @@ func (e *Engine) Status(requestedTags []string) ([]LinkStatus, error) {
 	return results, nil
 }
 
-// applyLink creates a symlink for a specific file
-func (e *Engine) applyLink(targetPath string, linkSpec config.LinkSpec) error {
+// applyLink creates a symlink for a specific file and returns a structured
+// result (no I/O side effects beyond symlink/backup creation).
+func (e *Engine) applyLink(targetPath string) ApplyResult {
+	failed := func(err error) ApplyResult {
+		return ApplyResult{
+			TargetPath: targetPath,
+			Outcome:    OutcomeFailed,
+			Err:        err,
+			Detail:     err.Error(),
+		}
+	}
+
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf(errors.ErrHomeDir, err)
+		return failed(fmt.Errorf(errors.ErrHomeDir, err))
 	}
 
 	rootDir := e.configMgr.GetRootDir()
@@ -330,49 +366,52 @@ func (e *Engine) applyLink(targetPath string, linkSpec config.LinkSpec) error {
 	// so we accept any existing entry (PathExists rather than FileExists).
 	exists, err := utils.PathExists(sourcePath)
 	if err != nil {
-		return fmt.Errorf("failed to check source path: %w", err)
+		return failed(fmt.Errorf("failed to check source path: %w", err))
 	}
 	if !exists {
-		return fmt.Errorf("source path does not exist: %s", sourcePath)
+		return failed(fmt.Errorf("source path does not exist: %s", sourcePath))
 	}
 
 	// Check if target already exists and is correct
 	if stat, err := os.Lstat(fullTargetPath); err == nil {
 		if stat.Mode()&os.ModeSymlink != 0 {
 			if linkTarget, err := os.Readlink(fullTargetPath); err == nil && linkTarget == sourcePath {
-				if e.verbose {
-					fmt.Printf("%s Already linked: %s -> %s\n",
-						color.YellowString("⏭️"), targetPath, sourcePath)
+				return ApplyResult{
+					TargetPath: targetPath,
+					Outcome:    OutcomeSkipped,
+					Detail:     "already linked",
 				}
-				return nil
 			}
 		}
 
 		// Backup existing file
 		if err := e.backupFile(fullTargetPath); err != nil {
-			return fmt.Errorf("failed to backup existing file: %w", err)
+			return failed(fmt.Errorf("failed to backup existing file: %w", err))
 		}
 	}
 
 	// Ensure target directory exists
 	targetDir := filepath.Dir(fullTargetPath)
 	if err := utils.EnsureDir(targetDir); err != nil {
-		return fmt.Errorf("failed to create target directory: %w", err)
+		return failed(fmt.Errorf("failed to create target directory: %w", err))
 	}
 
-	// Create symlink
 	if e.dryRun {
-		fmt.Printf("%s [DRY-RUN] Would create link: %s -> %s\n",
-			color.CyanString("ℹ️"), targetPath, sourcePath)
-	} else {
-		if err := os.Symlink(sourcePath, fullTargetPath); err != nil {
-			return fmt.Errorf("failed to create symlink: %w", err)
+		return ApplyResult{
+			TargetPath: targetPath,
+			Outcome:    OutcomeDryRun,
+			Detail:     "→ " + sourcePath,
 		}
-		fmt.Printf("%s Linked: %s -> %s\n",
-			color.GreenString("✓"), targetPath, sourcePath)
 	}
 
-	return nil
+	if err := os.Symlink(sourcePath, fullTargetPath); err != nil {
+		return failed(fmt.Errorf("failed to create symlink: %w", err))
+	}
+	return ApplyResult{
+		TargetPath: targetPath,
+		Outcome:    OutcomeApplied,
+		Detail:     "→ " + sourcePath,
+	}
 }
 
 // backupFile creates a backup of an existing file
@@ -385,8 +424,6 @@ func (e *Engine) backupFile(filePath string) error {
 	backupPath := filepath.Join(e.backupDir, fileName+".backup")
 
 	if e.dryRun {
-		fmt.Printf("%s [DRY-RUN] Would backup: %s -> %s\n",
-			color.CyanString("ℹ️"), filePath, backupPath)
 		return nil
 	}
 
@@ -397,9 +434,6 @@ func (e *Engine) backupFile(filePath string) error {
 	if err := os.Rename(filePath, backupPath); err != nil {
 		return fmt.Errorf("failed to move to backup: %w", err)
 	}
-
-	fmt.Printf("%s Backed up: %s -> %s\n",
-		color.BlueString("💾"), filePath, backupPath)
 
 	return nil
 }
@@ -425,16 +459,12 @@ func (e *Engine) restoreOriginal(targetPath string) error {
 	fullTargetPath := filepath.Join(homeDir, targetPath)
 
 	if e.dryRun {
-		fmt.Printf("%s [DRY-RUN] Would restore: %s -> %s\n",
-			color.CyanString("ℹ️"), backupPath, fullTargetPath)
 		return nil
 	}
 
 	if err := os.Rename(backupPath, fullTargetPath); err != nil {
 		return fmt.Errorf("failed to restore backup: %w", err)
 	}
-
-	fmt.Printf("%s Restored: %s\n", color.GreenString("✓"), targetPath)
 
 	return nil
 }
@@ -451,18 +481,13 @@ func (e *Engine) hasBackup(targetPath string) bool {
 // runHook executes a post-apply hook
 func (e *Engine) runHook(hook string, targetPath string) error {
 	if e.dryRun {
-		fmt.Printf("%s [DRY-RUN] Would run hook for %s: %s\n",
-			color.CyanString("ℹ️"), targetPath, hook)
 		return nil
 	}
 
-	if e.verbose {
-		fmt.Printf("%s Running hook for %s: %s\n",
-			color.BlueString("🔧"), targetPath, hook)
-	}
-
-	// For now, hooks are just informational
-	// In a full implementation, you might execute shell commands
+	// For now, hooks are just informational. Avoid emitting log lines from
+	// the engine; orchestrators surface hook results in their own UI.
+	_ = hook
+	_ = targetPath
 	return nil
 }
 

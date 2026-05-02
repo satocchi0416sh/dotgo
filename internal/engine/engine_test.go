@@ -261,8 +261,18 @@ func TestEngine_Apply(t *testing.T) {
 
 	// Test dry-run first
 	eng.dryRun = true
-	if err := eng.Apply([]string{"test"}); err != nil {
+	dryResults, err := eng.Apply([]string{"test"})
+	if err != nil {
 		t.Errorf("Apply() with dry-run error = %v", err)
+	}
+	if len(dryResults) != 1 {
+		t.Fatalf("Apply() dry-run results len = %d, want 1", len(dryResults))
+	}
+	if dryResults[0].Outcome != OutcomeDryRun {
+		t.Errorf("dry-run Outcome = %q, want %q", dryResults[0].Outcome, OutcomeDryRun)
+	}
+	if dryResults[0].Err != nil {
+		t.Errorf("dry-run Err = %v, want nil", dryResults[0].Err)
 	}
 
 	// Verify no symlink created in dry-run
@@ -273,8 +283,21 @@ func TestEngine_Apply(t *testing.T) {
 
 	// Test actual apply
 	eng.dryRun = false
-	if err := eng.Apply([]string{"test"}); err != nil {
+	results, err := eng.Apply([]string{"test"})
+	if err != nil {
 		t.Errorf("Apply() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("Apply() results len = %d, want 1", len(results))
+	}
+	if results[0].Outcome != OutcomeApplied {
+		t.Errorf("Outcome = %q, want %q", results[0].Outcome, OutcomeApplied)
+	}
+	if results[0].TargetPath != ".testrc" {
+		t.Errorf("TargetPath = %q, want %q", results[0].TargetPath, ".testrc")
+	}
+	if results[0].Err != nil {
+		t.Errorf("Err = %v, want nil", results[0].Err)
 	}
 
 	// Verify symlink was created
@@ -283,6 +306,52 @@ func TestEngine_Apply(t *testing.T) {
 		t.Error("Apply() did not create symlink")
 	} else if info.Mode()&os.ModeSymlink == 0 {
 		t.Error("Apply() created file instead of symlink")
+	}
+}
+
+// TestEngine_Apply_FailedResult verifies that a manifest entry pointing at a
+// non-existent source surfaces as a Failed ApplyResult (with non-nil Err)
+// rather than aborting Apply altogether.
+func TestEngine_Apply_FailedResult(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "apply-fail-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	homeDir, err := os.MkdirTemp("", "apply-fail-home")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(homeDir)
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", homeDir)
+	defer os.Setenv("HOME", originalHome)
+
+	eng := NewEngine(tmpDir, false, false)
+	if err := eng.configMgr.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Add a link whose source file does NOT exist under files/.
+	eng.configMgr.AddLink(".missingrc", config.LinkSpec{Tags: []string{"test"}})
+	if err := eng.configMgr.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := eng.Apply([]string{"test"})
+	if err != nil {
+		t.Fatalf("Apply() error = %v, want nil (per-link failures should not abort)", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results len = %d, want 1", len(results))
+	}
+	if results[0].Outcome != OutcomeFailed {
+		t.Errorf("Outcome = %q, want %q", results[0].Outcome, OutcomeFailed)
+	}
+	if results[0].Err == nil {
+		t.Error("Err = nil, want non-nil for failed apply")
 	}
 }
 
@@ -322,8 +391,10 @@ func TestEngine_applyLink_DirectorySource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := eng.applyLink(".config/myapp", config.LinkSpec{}); err != nil {
-		t.Fatalf("applyLink() error = %v", err)
+	if res := eng.applyLink(".config/myapp"); res.Err != nil {
+		t.Fatalf("applyLink() error = %v", res.Err)
+	} else if res.Outcome != OutcomeApplied {
+		t.Fatalf("applyLink() Outcome = %q, want %q", res.Outcome, OutcomeApplied)
 	}
 
 	targetPath := filepath.Join(homeDir, ".config", "myapp")
