@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -36,7 +37,30 @@ Commands:
   • apply  - Create symlinks for managed files  
   • rm     - Remove files from management
   • status - Show current status`,
-	Version: "0.2.0",
+	Version: resolveVersion(),
+}
+
+// resolveVersion reads the version embedded by the Go toolchain at build time.
+// `go install module@vX.Y.Z` and `go install module@latest` both populate
+// `Main.Version`; for unversioned local builds it falls back to the VCS
+// revision (or "dev" when neither is available).
+func resolveVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			if len(s.Value) > 12 {
+				return s.Value[:12]
+			}
+			return s.Value
+		}
+	}
+	return "dev"
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
