@@ -1,6 +1,6 @@
 # dotgo
 
-[![Go Version](https://img.shields.io/badge/Go-1.21+-blue.svg)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.27.3+-blue.svg)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/satocchi0416sh/dotgo/actions/workflows/ci.yml/badge.svg)](https://github.com/satocchi0416sh/dotgo/actions/workflows/ci.yml)
 
